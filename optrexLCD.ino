@@ -1,3 +1,5 @@
+#define DEBUG_LCD
+
 
 #define OPTREX_INSTRUCTION_REGISTER 0
 #define OPTREX_DATA_REGISTER 1
@@ -42,13 +44,13 @@
 
 
 
-class optrexDMCLCD
+class optrexLCD
 {
   public:
-  optrexDMCLCD (byte dataPin, byte rwPin, byte rsPin, byte enPin, byte interface_size);
+  optrexLCD(byte rsPin, byte rwPin, byte enPin, byte dataPin, byte interfaceSize, byte numLines, byte fontSize);
   void init(void);
 
-  void clearLCD(void);
+  void clearDisplay(void);
   void goToHome(void);
   void setCursorAutoMoveLeft(void);
   void setCursorAutoMoveRight(void);
@@ -64,37 +66,26 @@ class optrexDMCLCD
   void setBlinkOff(void);
   void setDisplayOn(void);
   void setDisplayOff(void);
-  void setInterfaceSize(byte s);
-  void setDisplayLines(byte lines);
-  void setCharacterFont5x7(void);
-  void setCharacterFont5x10(void);
   void setCGAddress(byte addr);
   void setDDAddress(byte addr);
   void gotoXY(byte x, byte y);
   void print(const char *szBuf);  
 
   private:
-  void write(byte reg, byte value);
-  byte read(byte reg);
-  void writeNibble(byte reg, byte value);
+  void rawWriteByte(byte reg, byte value);
+  void writeByte(byte reg, byte data);
+  void rawWriteNibble(byte reg, byte start_pin, byte nib);
+  void writeNibble(byte reg, byte start_pin, byte nib);
+  byte readByte(byte reg);
+  byte readNibble(byte reg, byte start_pin);
   void setReadMode(void);
   void setWriteMode(void);
   void waitForReady(void);
 
-  void setFunction(void);
-
-
   byte _entryModeRegister;
   byte _displayOnOffRegister;
-  byte _setFunctionRegister;
+  byte _functionRegister;
   
- // byte cursorMove=OPTREX_INCREMENT;
-  //byte autoShift=OPTREX_AUTOSHIFT_ON;
-  //byte isBlinkOn=OPTREX_BLINK_OFF;
-  //byte isCursorOn=OPTREX_CURSOR_OFF;
-  //byte isDisplayOn=OPTREX_DISPLAY_ON;
-
- 
   byte rw_pin;
   byte rs_pin;
   byte en_pin;
@@ -104,374 +95,26 @@ class optrexDMCLCD
 };
 
 
-void optrexDMCLCD::waitForReady(void)
+void optrexLCD::waitForReady(void)
 {
-  while ((this->read(OPTREX_INSTRUCTION_REGISTER) & B10000000 == 0))
-    delayMicroseconds(1);
-}
-
-void optrexDMCLCD::writeNibble(byte reg, byte nib)
-{
-  digitalWrite(rs_pin, reg);
-  digitalWrite(rw_pin, LOW);
-  digitalWrite(en_pin, HIGH);
-
-  digitalWrite (d0_pin + 7, bitRead(nib, 3));
-  digitalWrite (d0_pin + 6, bitRead(nib, 2));
-  digitalWrite (d0_pin + 5, bitRead(nib, 1));
-  digitalWrite (d0_pin + 4, bitRead(nib, 0));
-  delayMicroseconds(1);  
-    
-  digitalWrite (en_pin, LOW);
-}
-
-byte optrexDMCLCD::read(byte reg)
-{
-  byte v;
-  
   setReadMode();
-  
-  digitalWrite(rs_pin, reg);
-  digitalWrite(rw_pin, HIGH);
-  digitalWrite(en_pin, HIGH);
-
-  // To be improved to support 4 bit interface
-  if (_interfaceSize == OPTREX_8BIT)
-  {
-    bitWrite(v, 0, digitalRead (d0_pin + 0));
-    bitWrite(v, 1, digitalRead (d0_pin + 1));
-    bitWrite(v, 2, digitalRead (d0_pin + 2));
-    bitWrite(v, 3, digitalRead (d0_pin + 3));
+  if (_interfaceSize == 8)
+  {  
+    while ((readByte(OPTREX_INSTRUCTION_REGISTER) & B10000000 == 0))
+      delayMicroseconds(1);
   }
-  bitWrite(v, 4, digitalRead (d0_pin + 4));
-  bitWrite(v, 5, digitalRead (d0_pin + 5));
-  bitWrite(v, 6, digitalRead (d0_pin + 6));
-  bitWrite(v, 7, digitalRead (d0_pin + 7));
-
-  delayMicroseconds(1);  
-    
-  digitalWrite (en_pin, LOW);
-  return v;
-}
-
-void optrexDMCLCD::setWriteMode()
-{
-  if (_dataDirection != OUTPUT)
+  else
   {
-    for (byte i=0; i<((_interfaceSize==OPTREX_4BIT) ? 4 : 8); i++)
-      pinMode(d0_pin + i, OUTPUT);
-    _dataDirection = OUTPUT; 
+    while ((readByte(OPTREX_INSTRUCTION_REGISTER) & B10000000 == 0))
+      delayMicroseconds(1);
   }
 }
 
-void optrexDMCLCD::setReadMode()
+void optrexLCD::rawWriteByte(byte reg, byte data)
 {
-  if (_dataDirection != INPUT)
-  {
-    for (byte i=0; i<((_interfaceSize==OPTREX_4BIT) ? 4 : 8); i++)
-      pinMode(d0_pin + i, INPUT);
-    _dataDirection = INPUT; 
-  }
-}
-
-
-optrexDMCLCD::optrexDMCLCD(byte rsPin, byte rwPin, byte enPin, byte dataPin, byte interfaceSize)
-{
-
-  d0_pin = dataPin;
-  rw_pin = rwPin;
-  rs_pin = rsPin;
-  en_pin = enPin;
-  _interfaceSize = interfaceSize;
-}
-
-void optrexDMCLCD::init(void)
-{
-  pinMode(rw_pin, OUTPUT);
-  pinMode(rs_pin, OUTPUT);
-  pinMode(en_pin, OUTPUT);
-
-#ifdef DEBUG_LCD
-  Serial.begin(9600);
-  Serial.println("Setting write mode");
-#endif
-
-  setWriteMode();
-
-  delayMicroseconds(15000);                      // initial delay after power-up (probably not necessary)
-
-  // Send Set Command 0B0011
-  writeNibble (OPTREX_INSTRUCTION_REGISTER, B0011);
-  delayMicroseconds(5000);
-
-  // Send Set Command
-  writeNibble (OPTREX_INSTRUCTION_REGISTER, B0011);
-  delayMicroseconds(101);
-
-  // Send Set Command
-  writeNibble (OPTREX_INSTRUCTION_REGISTER, B0011);
-#ifdef DEBUG_LCD
-  Serial.println("3rd set command processed");
-#endif
-  // Set the interface to the requested size
-  waitForReady();
-  this->setInterfaceSize(_interfaceSize);
-
-#ifdef DEBUG_LCD
-  Serial.println("Interface size set");
-#endif
-
-  
-  // Clear display
-  this->clearLCD();
-#ifdef DEBUG_LCD
-  Serial.println("ClearDisplay done");
-#endif
-
-  this->setDisplayOff();
-#ifdef DEBUG_LCD
-  Serial.println("SetDisplayOff done");
-#endif
-
-  this->setDisplayOn();
-#ifdef DEBUG_LCD
-  Serial.println("SetDisplayOn done");
-#endif
-}
-
-// CLEAR DISPLAY COMMAND
-void optrexDMCLCD::clearLCD(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_CLEAR_DISPLAY);
-  delayMicroseconds(1640);
-}
-
-// RETURN HOME COMMAND
-void optrexDMCLCD::goToHome(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_HOME);
-  delayMicroseconds(1640);
-}
-
-// ENTRY MODE COMMANDS
-void optrexDMCLCD::setCursorAutoMoveLeft(void)
-{
-  _entryModeRegister &= ~OPTREX_INCREMENT;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCursorAutoMoveRight(void)
-{
-  _entryModeRegister |= OPTREX_INCREMENT;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setAutoShiftOn(void)
-{
-  waitForReady();
-  _entryModeRegister |= OPTREX_AUTOSHIFT_ON;
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setAutoShiftOff(void)
-{
-  waitForReady();
-  _entryModeRegister &= ~OPTREX_AUTOSHIFT_ON;
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
-  delayMicroseconds(40);
-}
-
-// DISPLAY / CURSOR ON/OFF CONTROL
-void optrexDMCLCD::setDisplayOn(void)
-{
-  _displayOnOffRegister |= OPTREX_DISPLAY_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setDisplayOff(void)
-{
-  _displayOnOffRegister &= ~OPTREX_DISPLAY_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCursorOn(void)
-{
-  _displayOnOffRegister |= OPTREX_CURSOR_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCursorOff(void)
-{
-  _displayOnOffRegister &= ~OPTREX_CURSOR_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setBlinkOn(void)
-{
-  _displayOnOffRegister |= OPTREX_BLINK_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setBlinkOff(void)
-{
-  _displayOnOffRegister &= ~OPTREX_BLINK_ON;
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
-  delayMicroseconds(40);
-}
-
-
-// CURSOR / DISPLAY SHIFT COMMANDS
-void optrexDMCLCD::shiftCursorLeft(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_CURSOR | OPTREX_SHIFT_LEFT);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::shiftCursorRight(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_CURSOR | OPTREX_SHIFT_RIGHT);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::shiftDisplayLeft(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_DISPLAY | OPTREX_SHIFT_LEFT);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::shiftDisplayRight(void)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_DISPLAY | OPTREX_SHIFT_RIGHT);
-  delayMicroseconds(40);
-}
-
-// FUNCTION SET COMMANDS
-void optrexDMCLCD::setInterfaceSize(byte s)
-{
-  switch (s)
-  {
-    case 4:
-      _setFunctionRegister &= ~OPTREX_8BIT;
-      _interfaceSize=4;
-
-    case 8:
-      _setFunctionRegister |= OPTREX_8BIT;
-      _interfaceSize=8;
-
-    default:
-#ifdef DEBUG_LCD
-      Serial.println ("Incorrect argument in optrexDMCLCD::setInterfaceSize");
-#endif
-      return;
-  }
-
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_FUNCTIONSET | _setFunctionRegister);
-  delayMicroseconds(40);
-}
-
-
-void optrexDMCLCD::setDisplayLines(byte lines)
-{
-  switch (lines)
-  {
-    case 1: 
-      _setFunctionRegister &= ~OPTREX_2_LINE;
-      break;
-
-    case 2:
-      _setFunctionRegister |= OPTREX_2_LINE;
-      break;
-
-    default: 
-#ifdef DEBUG_LCD
-      Serial.println ("Invalid argument in optrexDMCLCD::setDisplayLines");
-#endif
-      return;
-  }
-  
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_FUNCTIONSET | _setFunctionRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCharacterFont5x7(void)
-{
-  _setFunctionRegister &= ~OPTREX_5x10;
-
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_FUNCTIONSET | _setFunctionRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCharacterFont5x10(void)
-{
-  _setFunctionRegister |= OPTREX_5x10;
-
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_FUNCTIONSET | _setFunctionRegister);
-  delayMicroseconds(40);
-}
-
-void optrexDMCLCD::setCGAddress(byte addr)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SET_CGADDR | (addr & B00111111));
-  delayMicroseconds(42);
-}
-
-void optrexDMCLCD::setDDAddress(byte addr)
-{
-  waitForReady();
-  this->write(OPTREX_INSTRUCTION_REGISTER, OPTREX_SET_DDADDR | (addr & B01111111));
-  delayMicroseconds(42);
-}
-
-
-void optrexDMCLCD::gotoXY(byte x, byte y)
-{
-  setDDAddress (x + 0x40*y);
-}
-
-
-void optrexDMCLCD::print(const char *buf)
-{
-  byte i;
-
-  for (i=0; i<strlen(buf); i++)
-  {
-    this->write(OPTREX_DATA_REGISTER, buf[i]);
-  }
-}
-
-void optrexDMCLCD::write(byte reg, byte data)
-{
-  setWriteMode();
- 
   if (_interfaceSize == 8)
   {
+    setWriteMode();
     digitalWrite(rs_pin, reg);
     delayMicroseconds(1);    
     digitalWrite(rw_pin, LOW);
@@ -493,22 +136,359 @@ void optrexDMCLCD::write(byte reg, byte data)
     digitalWrite (rw_pin, HIGH);
     delayMicroseconds(1);   
 
-#ifdef DEBUG_LCD
-    Serial.print(data); Serial.println(" written"); 
-#endif
   } 
   else
   {
-    writeNibble (rs_pin, (data & 0xF0) >>4);
-    delayMicroseconds(50);
-    writeNibble (rs_pin, (data & 0x0F));
-  }
+    waitForReady();
+    setWriteMode();
+    rawWriteNibble (reg, d0_pin, data>>4);
 
-  delayMicroseconds(50);
+//    waitForReady();
+//    setWriteMode();
+    rawWriteNibble (reg, d0_pin, data);
+  }
+#ifdef DEBUG_LCD
+    Serial.print(data); Serial.println(" written"); 
+#endif
 }
 
-// optrexDMCLCD (byte rsPin, byte rwPin, byte enPin, byte dataPin, byte enPin, byte interface_size);
-optrexDMCLCD myLCD (3, 4, 5, 6, 8);
+void optrexLCD::writeByte(byte reg, byte data)
+{
+  waitForReady();
+  rawWriteByte(reg, data);
+}
+
+void optrexLCD::rawWriteNibble(byte reg, byte start_pin, byte nib)
+{
+  digitalWrite(rs_pin, reg);
+  digitalWrite(rw_pin, LOW);
+  digitalWrite(en_pin, HIGH);
+
+  digitalWrite (start_pin + 3, bitRead(nib, 3));
+  digitalWrite (start_pin + 2, bitRead(nib, 2));
+  digitalWrite (start_pin + 1, bitRead(nib, 1));
+  digitalWrite (start_pin + 0, bitRead(nib, 0));
+  delayMicroseconds(1);  
+    
+  digitalWrite (en_pin, LOW);
+}
+
+void optrexLCD::writeNibble(byte reg, byte start_pin, byte nib)
+{
+  waitForReady();
+  rawWriteNibble(reg, start_pin, nib);
+}
+
+byte optrexLCD::readByte(byte reg)
+{
+  byte v;
+  
+  setReadMode();
+  
+  digitalWrite(rs_pin, reg);
+  digitalWrite(rw_pin, HIGH);
+  digitalWrite(en_pin, HIGH);
+
+  if (_interfaceSize == 8)
+  {
+    bitWrite(v, 0, digitalRead (d0_pin + 0));
+    bitWrite(v, 1, digitalRead (d0_pin + 1));
+    bitWrite(v, 2, digitalRead (d0_pin + 2));
+    bitWrite(v, 3, digitalRead (d0_pin + 3));
+    bitWrite(v, 4, digitalRead (d0_pin + 4));
+    bitWrite(v, 5, digitalRead (d0_pin + 5));
+    bitWrite(v, 6, digitalRead (d0_pin + 6));
+    bitWrite(v, 7, digitalRead (d0_pin + 7));
+
+    delayMicroseconds(1);  
+    
+    digitalWrite (en_pin, LOW);
+  }
+  else
+  {
+    bitWrite(v, 4, digitalRead (d0_pin + 0));
+    bitWrite(v, 5, digitalRead (d0_pin + 1));
+    bitWrite(v, 6, digitalRead (d0_pin + 2));
+    bitWrite(v, 7, digitalRead (d0_pin + 3));
+    delayMicroseconds(1);  
+    digitalWrite (en_pin, LOW);
+
+    delayMicroseconds(50);
+    digitalWrite(en_pin, HIGH);
+    bitWrite(v, 0, digitalRead (d0_pin + 0));
+    bitWrite(v, 1, digitalRead (d0_pin + 1));
+    bitWrite(v, 2, digitalRead (d0_pin + 2));
+    bitWrite(v, 3, digitalRead (d0_pin + 3));
+    delayMicroseconds(1);  
+    digitalWrite (en_pin, LOW);
+  }
+  return v;
+}
+
+// Read a nibble from register reg, LSB at start_pin
+byte optrexLCD::readNibble(byte reg, byte start_pin)
+{
+  byte v=0;
+  
+  setReadMode();
+  
+  digitalWrite(rs_pin, reg);
+  digitalWrite(rw_pin, HIGH);
+  digitalWrite(en_pin, HIGH);
+
+  bitWrite(v, 0, digitalRead (start_pin + 0));
+  bitWrite(v, 1, digitalRead (start_pin + 1));
+  bitWrite(v, 2, digitalRead (start_pin + 2));
+  bitWrite(v, 3, digitalRead (start_pin + 3));
+  delayMicroseconds(1);  
+  digitalWrite (en_pin, LOW);
+  return v;
+}
+
+// Set the data pins to write mode
+void optrexLCD::setWriteMode()
+{
+  if (_dataDirection != OUTPUT)
+  {
+    for (byte i=0; i<_interfaceSize; i++)
+      pinMode(d0_pin + i, OUTPUT);
+    _dataDirection = OUTPUT; 
+  }
+}
+
+// Set the data pins to read mode
+void optrexLCD::setReadMode()
+{
+  if (_dataDirection != INPUT)
+  {
+    for (byte i=0; i<_interfaceSize; i++)
+      pinMode(d0_pin + i, INPUT);
+    _dataDirection = INPUT; 
+  }
+}
+
+
+optrexLCD::optrexLCD(byte rsPin, byte rwPin, byte enPin, byte dataPin, byte interfaceSize, byte numLines=OPTREX_2_LINE, byte fontSize=OPTREX_5x10)
+{
+
+  d0_pin = dataPin;
+  rw_pin = rwPin;
+  rs_pin = rsPin;
+  en_pin = enPin;
+  _interfaceSize = interfaceSize;
+  _functionRegister = (numLines | fontSize);
+  _entryModeRegister = OPTREX_INCREMENT;
+}
+
+
+
+void optrexLCD::init(void)
+{
+  pinMode(rw_pin, OUTPUT);
+  pinMode(rs_pin, OUTPUT);
+  pinMode(en_pin, OUTPUT);
+
+#ifdef DEBUG_LCD
+  Serial.begin(9600);
+  Serial.println("Initialising display");
+#endif
+
+  setWriteMode();
+
+  delayMicroseconds(15000);                      // initial delay after power-up (probably not necessary)
+
+  // Send Set Command 0B0011
+  rawWriteNibble (OPTREX_INSTRUCTION_REGISTER, d0_pin + _interfaceSize - 4, B0011);
+  delayMicroseconds(5000);
+
+  // Send Set Command
+  rawWriteNibble (OPTREX_INSTRUCTION_REGISTER, d0_pin + _interfaceSize - 4, B0011);
+  delayMicroseconds(101);
+
+  // Send Set Command
+  rawWriteNibble (OPTREX_INSTRUCTION_REGISTER, d0_pin + _interfaceSize - 4, B0011);
+
+  // Set the interface to the requested size
+  if (_interfaceSize == 4)
+  {
+    // Set interface to 4 bits, 
+    writeNibble(OPTREX_INSTRUCTION_REGISTER, d0_pin + _interfaceSize - 4, B0010);
+
+    // Function set - number of lines and character font
+    writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_FUNCTIONSET | 0);  // If I set the Function Set register to OPTREX_2_LINE | OPTREX_5x10 I get only 1 line on the display
+    setDisplayOff();
+    clearDisplay();
+
+    // Entry mode set
+    writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+
+    setDisplayOn();
+  }
+  else
+  {
+    setDisplayOff();
+    clearDisplay();
+
+    // Set interface to 8 bits
+    writeByte(OPTREX_INSTRUCTION_REGISTER, B00000111);  
+
+    setDisplayOff();
+    clearDisplay();
+
+    // Entry mode set
+    writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+
+    setDisplayOn();
+  }
+#ifdef DEBUG_LCD
+  Serial.println ("Init complete");
+#endif
+}
+
+// CLEAR DISPLAY COMMAND
+void optrexLCD::clearDisplay(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_CLEAR_DISPLAY);
+  delayMicroseconds(1640);
+}
+
+// RETURN HOME COMMAND
+void optrexLCD::goToHome(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_HOME);
+  delayMicroseconds(1640);
+}
+
+// ENTRY MODE COMMANDS
+void optrexLCD::setCursorAutoMoveLeft(void)
+{
+  _entryModeRegister &= ~OPTREX_INCREMENT;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setCursorAutoMoveRight(void)
+{
+  _entryModeRegister |= OPTREX_INCREMENT;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setAutoShiftOn(void)
+{
+  _entryModeRegister |= OPTREX_AUTOSHIFT_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setAutoShiftOff(void)
+{
+  _entryModeRegister &= ~OPTREX_AUTOSHIFT_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_ENTRY_MODE | _entryModeRegister);
+  delayMicroseconds(40);
+}
+
+// DISPLAY / CURSOR ON/OFF CONTROL
+void optrexLCD::setDisplayOn(void)
+{
+  _displayOnOffRegister |= OPTREX_DISPLAY_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setDisplayOff(void)
+{
+  _displayOnOffRegister &= ~OPTREX_DISPLAY_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setCursorOn(void)
+{
+  _displayOnOffRegister |= OPTREX_CURSOR_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setCursorOff(void)
+{
+  _displayOnOffRegister &= ~OPTREX_CURSOR_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setBlinkOn(void)
+{
+  _displayOnOffRegister |= OPTREX_BLINK_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setBlinkOff(void)
+{
+  _displayOnOffRegister &= ~OPTREX_BLINK_ON;
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_DISPLAY_ONOFF | _displayOnOffRegister);
+  delayMicroseconds(40);
+}
+
+
+// CURSOR / DISPLAY SHIFT COMMANDS
+void optrexLCD::shiftCursorLeft(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_CURSOR | OPTREX_SHIFT_LEFT);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::shiftCursorRight(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_CURSOR | OPTREX_SHIFT_RIGHT);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::shiftDisplayLeft(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_DISPLAY | OPTREX_SHIFT_LEFT);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::shiftDisplayRight(void)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SHIFT | OPTREX_SHIFT_DISPLAY | OPTREX_SHIFT_RIGHT);
+  delayMicroseconds(40);
+}
+
+void optrexLCD::setCGAddress(byte addr)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SET_CGADDR | (addr & B00111111));
+  delayMicroseconds(42);
+}
+
+void optrexLCD::setDDAddress(byte addr)
+{
+  writeByte(OPTREX_INSTRUCTION_REGISTER, OPTREX_SET_DDADDR | (addr & B01111111));
+  delayMicroseconds(42);
+}
+
+
+void optrexLCD::gotoXY(byte x, byte y)
+{
+  setDDAddress (x + 0x40*y);
+}
+
+
+void optrexLCD::print(const char *buf)
+{
+  byte i;
+
+  for (i=0; i<strlen(buf); i++)
+  {
+    writeByte(OPTREX_DATA_REGISTER, buf[i]);
+  }
+}
+
+
+// optrexLCD(byte rsPin, byte rwPin, byte enPin, byte dataPin, byte interfaceSize, byte numLines, byte fontSize)
+optrexLCD myLCD (3, 4, 5, 10, 4);
 
 
 // Test
@@ -516,11 +496,10 @@ void setup() {
   Serial.begin(9600);
   Serial.println ("Entering setup()");
   myLCD.init();
-  myLCD.setDisplayLines(2);
 
 
   // put your setup code here, to run once:
-  myLCD.clearLCD();
+  myLCD.clearDisplay();
   myLCD.goToHome();
 
   Serial.println ("LCD initialised");
@@ -530,13 +509,14 @@ int i=0;
 char szBuf[16];
 
 void loop() {
-  myLCD.clearLCD();
-  myLCD.goToHome();
-
   sprintf (szBuf, "%i", i);
+
+  myLCD.gotoXY(0, i%2);
   myLCD.print(szBuf);
   
   delay(1000);
-
+#ifdef DEBUG_LCD
+  Serial.print ("Written "); Serial.println (szBuf);
+#endif
   i++;
 }
